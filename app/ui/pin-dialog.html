@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>Enter PIN</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            padding: 20px;
+            margin: 0;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 360px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h3 {
+            margin-top: 0;
+            color: #333;
+            text-align: center;
+        }
+
+        .prompt {
+            margin-bottom: 15px;
+            padding: 10px;
+            background-color: #e3f2fd;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 14px;
+        }
+
+        input[type="password"] {
+            width: 100%;
+            padding: 12px;
+            margin: 10px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+
+        .button-group {
+            display: flex;
+            gap: 10px;
+            margin-top: 15px;
+        }
+
+        button {
+            flex: 1;
+            padding: 12px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+        }
+
+        .ok {
+            background-color: #007acc;
+            color: white;
+        }
+
+        .ok:hover {
+            background-color: #005a9e;
+        }
+
+        .cancel {
+            background-color: #f0f0f0;
+            color: #333;
+        }
+
+        .cancel:hover {
+            background-color: #e0e0e0;
+        }
+
+        .error {
+            color: #d32f2f;
+            font-size: 12px;
+            margin-top: 5px;
+            text-align: center;
+            display: none;
+        }
+
+        .status {
+            margin-top: 10px;
+            padding: 8px;
+            border-radius: 4px;
+            text-align: center;
+            font-size: 12px;
+            display: none;
+        }
+
+        .status.success {
+            background-color: #d4edda;
+            color: #155724;
+            display: block;
+        }
+    </style>
+</head>
+
+<body>
+    <div class="container">
+        <h3>Smart Card Authentication</h3>
+        <div class="prompt" id="prompt-text">
+            Enter your smart card PIN
+        </div>
+        <input type="password" id="pinInput" placeholder="Enter PIN" autocomplete="off" maxlength="20">
+        <div class="error" id="error-message"></div>
+        <div class="status" id="status-message"></div>
+        <div class="button-group">
+            <button class="cancel" id="cancelBtn">Cancel</button>
+            <button class="ok" id="okBtn">OK</button>
+        </div>
+    </div>
+
+    <script>
+let requestId = null;
+
+function showError(message) {
+    const errorEl = document.getElementById('error-message');
+    if (errorEl) {
+        errorEl.textContent = message;
+        errorEl.style.display = 'block';
+    }
+}
+
+function showStatus(message) {
+    const statusEl = document.getElementById('status-message');
+    if (statusEl) {
+        statusEl.textContent = message;
+        statusEl.className = 'status success';
+        statusEl.style.display = 'block';
+    }
+}
+
+// Initialize when DOM is loaded
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('=== PIN DIALOG INITIALIZED ===');
+    const pinInput = document.getElementById('pinInput');
+    
+    if (pinInput) {
+        pinInput.focus();
+    }
+
+    try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const prompt = urlParams.get('prompt');
+        const id = urlParams.get('request_id');
+
+        if (prompt) {
+            const decodedPrompt = decodeURIComponent(prompt.replace(/\+/g, ' '));
+            document.getElementById('prompt-text').textContent = decodedPrompt;
+            console.log("Received prompt:", decodedPrompt);
+        }
+
+        if (id) {
+            requestId = parseInt(id, 10);
+            console.log("Received request_id:", requestId);
+        } else {
+            console.error("No request_id found in URL");
+        }
+    } catch (error) {
+        console.error('Error parsing URL parameters:', error);
+    }
+
+    // Check if we're in a Tauri context
+    const isTauriContext = () => {
+        return typeof window.__TAURI__ !== 'undefined';
+    };
+
+    async function submitPin() {
+        console.log('=== SUBMIT PIN CALLED ===');
+        console.log('Request ID:', requestId);
+        
+        const pinInput = document.getElementById('pinInput');
+        if (!pinInput) {
+            console.error('PIN input field not found');
+            showError('UI Error: Input field not found');
+            return;
+        }
+
+        const pin = pinInput.value.trim();
+        if (pin.length === 0) {
+            showError('Please enter a PIN');
+            return;
+        }
+
+        if (requestId === null || requestId === undefined) {
+            showError('Request ID not found');
+            return;
+        }
+
+        try {
+            showStatus('Submitting PIN...');
+
+            if (isTauriContext()) {
+                // Use the proper Tauri invoke method
+                await window.__TAURI__.core.invoke('submit_pin', {
+                    requestId: requestId,
+                    pin: pin
+                });
+                console.log('PIN submitted successfully via invoke');
+                showStatus('PIN submitted successfully!');
+            } else {
+                console.error('Tauri API not available, cannot submit PIN.');
+                showError('Internal Error: Tauri API not found.');
+                return;
+            }
+
+            setTimeout(() => {
+                if (isTauriContext() && window.__TAURI__?.window?.appWindow) {
+                    window.__TAURI__.window.appWindow.close();
+                } else {
+                    window.close();
+                }
+            }, 500);
+
+        } catch (error) {
+            console.error('Error submitting PIN:', error);
+            showError('Error: ' + (error.message || 'Failed to submit PIN'));
+        }
+    }
+
+    async function cancelPin() {
+        console.log('=== CANCEL PIN CALLED ===');
+        console.log('Request ID:', requestId);
+        showStatus('Cancelling...');
+
+        try {
+            if (isTauriContext()) {
+                await window.__TAURI__.core.invoke('cancel_pin', {
+                    requestId: requestId
+                });
+                console.log('Cancel submitted successfully');
+            } else {
+                console.error('Tauri API not available, cannot cancel.');
+                showError('Internal Error: Tauri API not found.');
+                // Still close the window
+                setTimeout(() => window.close(), 1000);
+                return;
+            }
+
+            setTimeout(() => {
+                if (isTauriContext() && window.__TAURI__?.window?.appWindow) {
+                    window.__TAURI__.window.appWindow.close();
+                } else {
+                    window.close();
+                }
+            }, 500);
+
+        } catch (error) {
+            console.error('Error cancelling:', error);
+            window.close();
+        }
+    }
+
+    // Add event listener for pin_processed events
+    if (isTauriContext()) {
+        // Listen for events from Rust
+        window.__TAURI__.event.listen('pin_processed', (event) => {
+            console.log('Received pin_processed event:', event);
+            showStatus('Operation completed!');
+            setTimeout(() => {
+                if (window.__TAURI__?.window?.appWindow) {
+                    window.__TAURI__.window.appWindow.close();
+                } else {
+                    window.close();
+                }
+            }, 500);
+        });
+    }
+
+    const okBtn = document.getElementById('okBtn');
+    const cancelBtn = document.getElementById('cancelBtn');
+
+    if (okBtn) okBtn.addEventListener('click', submitPin);
+    if (cancelBtn) cancelBtn.addEventListener('click', cancelPin);
+    if (pinInput) pinInput.addEventListener('keypress', (e) => {
+        if (e.key === 'Enter') {
+            submitPin();
+        }
+    });
+
+    console.log('PIN dialog fully initialized and ready');
+    
+    // Check for Tauri API availability
+    if (!isTauriContext()) {
+        console.error('Tauri API is not available on window. It will fail to invoke commands.');
+        showError('Error: Desktop integration not available');
+    } else {
+        console.log('Tauri API is available. Ready to invoke commands.');
+    }
+});
+
+</script>
+</body>
+
+</html>

@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Digital Sign</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        button {
+            background-color: #007acc;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #005a9e;
+        }
+        button:disabled {
+            background-color: #cccccc;
+            cursor: not-allowed;
+        }
+        #status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        .warning { background-color: #fff3cd; color: #856404; }
+        
+        /* Certificates List */
+        .certificates {
+            margin: 20px 0;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            max-height: 300px;
+            overflow-y: auto;
+        }
+        .certificate-item {
+            padding: 10px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+        }
+        .certificate-item:hover {
+            background-color: #f9f9f9;
+        }
+        .certificate-item.selected {
+            background-color: #e3f2fd;
+        }
+        .certificate-item:last-child {
+            border-bottom: none;
+        }
+        
+        /* File upload */
+        .file-upload {
+            border: 2px dashed #ccc;
+            border-radius: 4px;
+            padding: 20px;
+            text-align: center;
+            margin: 20px 0;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Digital Sign App</h1>
+        
+        <p>Status: <span id="status" class="info">Server starting...</span></p>
+        
+        <div>
+            <button id="connectBtn">Connect to Server</button>
+            <button id="getCertificatesBtn" disabled>Get Certificates</button>
+        </div>
+        
+        <div id="certificatesSection" style="display: none;">
+            <h3>Available Certificates:</h3>
+            <div id="certificatesList" class="certificates"></div>
+            <button id="signBtn" disabled>Sign Selected Document</button>
+        </div>
+        
+        <div id="fileUploadSection" style="display: none;">
+            <div class="file-upload">
+                <p>Upload PDF to Sign:</p>
+                <input type="file" id="pdfFile" accept=".pdf">
+            </div>
+        </div>
+        
+        <div id="log" style="margin-top: 20px; white-space: pre-wrap; font-family: monospace; max-height: 200px; overflow-y: auto;"></div>
+    </div>
+
+    <script>
+        let ws = null;
+        let selectedCertificate = null;
+        let selectedFile = null;
+
+        const statusEl = document.getElementById('status');
+        const logEl = document.getElementById('log');
+        
+        function log(message) {
+            const time = new Date().toLocaleTimeString();
+            logEl.textContent += `[${time}] ${message}\n`;
+            logEl.scrollTop = logEl.scrollHeight;
+        }
+
+        function updateStatus(message, type = 'info') {
+            statusEl.textContent = message;
+            statusEl.className = type;
+        }
+
+        function connectToServer() {
+            try {
+                ws = new WebSocket('ws://127.0.0.1:8999');
+                
+                ws.onopen = () => {
+                    updateStatus('Connected to signing server', 'success');
+                    log('WebSocket connection established');
+                    document.getElementById('getCertificatesBtn').disabled = false;
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        handleServerMessage(data);
+                    } catch (e) {
+                        log('Error parsing message: ' + e.message);
+                    }
+                };
+
+                ws.onerror = (error) => {
+                    updateStatus('Connection failed', 'error');
+                    log('WebSocket connection error: ' + error);
+                };
+                
+                ws.onclose = () => {
+                    updateStatus('Disconnected from server', 'warning');
+                    log('WebSocket connection closed');
+                    document.getElementById('getCertificatesBtn').disabled = true;
+                    document.getElementById('signBtn').disabled = true;
+                };
+            } catch (error) {
+                updateStatus('Connection error', 'error');
+                log('Error: ' + error.message);
+            }
+        }
+
+        function handleServerMessage(data) {
+            switch (data.command) {
+                case 'Certificates':
+                    if (data.status === 'success') {
+                        displayCertificates(data.certificates);
+                    } else {
+                        log('Error getting certificates: ' + data.message);
+                        updateStatus('Failed to get certificates', 'error');
+                    }
+                    break;
+                    
+                case 'Signature':
+                    if (data.status === 'success') {
+                        log('Document signed successfully!');
+                        updateStatus('Document signed successfully!', 'success');
+                        // Create download link for signed PDF
+                        const link = document.createElement('a');
+                        link.href = 'data:application/pdf;base64,' + data.signed_pdf_data;
+                        link.download = 'signed_document.pdf';
+                        link.click();
+                    } else {
+                        log('Error signing document: ' + data.message);
+                        updateStatus('Failed to sign document: ' + data.message, 'error');
+                    }
+                    break;
+                    
+                case 'Error':
+                    log('Server Error: ' + data.message);
+                    updateStatus('Server Error: ' + data.message, 'error');
+                    break;
+                    
+                default:
+                    log('Unknown message: ' + JSON.stringify(data));
+            }
+        }
+
+        function displayCertificates(certificates) {
+            const listEl = document.getElementById('certificatesList');
+            const sectionEl = document.getElementById('certificatesSection');
+            const fileSectionEl = document.getElementById('fileUploadSection');
+            
+            if (certificates.length === 0) {
+                listEl.innerHTML = '<p>No certificates found. Please insert your token.</p>';
+            } else {
+                listEl.innerHTML = certificates.map(cert => `
+                    <div class="certificate-item" data-id="${cert.id}" data-slot="${cert.slot_id}" data-ckaid="${cert.cka_id}">
+                        <strong>${cert.label}</strong><br>
+                        <small>Subject: ${cert.subject}</small><br>
+                        <small>Slot: ${cert.slot_id}, ID: ${cert.cka_id}</small>
+                    </div>
+                `).join('');
+                
+                // Add click handlers
+                document.querySelectorAll('.certificate-item').forEach(item => {
+                    item.addEventListener('click', function() {
+                        document.querySelectorAll('.certificate-item').forEach(i => 
+                            i.classList.remove('selected')
+                        );
+                        this.classList.add('selected');
+                        selectedCertificate = {
+                            id: this.dataset.id,
+                            slot_id: parseInt(this.dataset.slot),
+                            cka_id: this.dataset.ckaid,
+                            label: this.querySelector('strong').textContent,
+                            subject: this.querySelector('small').textContent
+                        };
+                        document.getElementById('signBtn').disabled = false;
+                    });
+                });
+            }
+            
+            sectionEl.style.display = 'block';
+            fileSectionEl.style.display = 'block';
+            updateStatus('Certificates loaded successfully', 'success');
+        }
+
+        // Event Listeners
+        document.getElementById('connectBtn').addEventListener('click', connectToServer);
+        
+        document.getElementById('getCertificatesBtn').addEventListener('click', () => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ command: 'GetCertificates' }));
+                updateStatus('Loading certificates...', 'info');
+            }
+        });
+        
+        document.getElementById('signBtn').addEventListener('click', () => {
+            if (!selectedCertificate) {
+                updateStatus('Please select a certificate first', 'warning');
+                return;
+            }
+            
+            const fileInput = document.getElementById('pdfFile');
+            const file = fileInput.files[0];
+            
+            if (!file) {
+                updateStatus('Please select a PDF file first', 'warning');
+                return;
+            }
+            
+            if (file.type !== 'application/pdf') {
+                updateStatus('Please select a PDF file', 'warning');
+                return;
+            }
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const pdfData = btoa(String.fromCharCode.apply(null, new Uint8Array(e.target.result)));
+                
+                const signatureArea = {
+                    x: 100,
+                    y: 100,
+                    width: 200,
+                    height: 100,
+                    page: 1
+                };
+                
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        command: 'SignAndEmbed',
+                        pdf_data: pdfData,
+                        slot_id: selectedCertificate.slot_id,
+                        cka_id: selectedCertificate.cka_id,
+                        signature_area: signatureArea
+                    }));
+                    updateStatus('Signing document... Please check desktop app for PIN entry', 'info');
+                }
+            };
+            reader.readAsArrayBuffer(file);
+        });
+
+        // File input change handler
+        document.getElementById('pdfFile').addEventListener('change', function(e) {
+            if (e.target.files.length > 0) {
+                log('Selected file: ' + e.target.files[0].name);
+            }
+        });
+        window.addEventListener('message', function(event) {
+    console.log('Main app received message:', event.data);
+    
+    if (event.data && event.data.type) {
+        // Forward to Tauri event system if available
+        if (window.__TAURI__ && window.__TAURI__.event) {
+            console.log('Forwarding to Tauri event:', event.data.type);
+            window.__TAURI__.event.emit(event.data.type, event.data.data);
+        } else {
+            console.log('Tauri event system not available in main app');
+        }
+    }
+});
+    </script>
+</body>
+</html>
